@@ -1,80 +1,50 @@
-packages <- c("data.table", "reshape2", "dplyr")
-sapply(packages, require, character.only=TRUE, quietly=TRUE)
+library(RCurl)
 
-path <- getwd()
-
-projectDataPath <- file.path(path, "project_data")
-fileCount <- length(list.files(projectDataPath, recursive=TRUE))
-if (fileCount != 28) {
-  stop("Please use setwd() to the root of the cloned repository.")
+if (!file.info('UCI HAR Dataset')$isdir) {
+  dataFile <- 'https://d396qusza40orc.cloudfront.net/getdata%2Fprojectfiles%2FUCI%20HAR%20Dataset.zip'
+  dir.create('UCI HAR Dataset')
+  download.file(dataFile, 'UCI-HAR-dataset.zip', method='curl')
+  unzip('./UCI-HAR-dataset.zip')
 }
 
-dtTrainingSubjects <- fread(file.path(projectDataPath, "train", "subject_train.txt"))
-dtTestSubjects  <- fread(file.path(projectDataPath, "test" , "subject_test.txt" ))
+# Merges the training and the test sets to create one data set.
+x.train <- read.table('./UCI HAR Dataset/train/X_train.txt')
+x.test <- read.table('./UCI HAR Dataset/test/X_test.txt')
+x <- rbind(x.train, x.test)
 
-dtTrainingActivity <- fread(file.path(projectDataPath, "train", "Y_train.txt"))
-dtTestActivity  <- fread(file.path(projectDataPath, "test" , "Y_test.txt" ))
+subj.train <- read.table('./UCI HAR Dataset/train/subject_train.txt')
+subj.test <- read.table('./UCI HAR Dataset/test/subject_test.txt')
+subj <- rbind(subj.train, subj.test)
 
+y.train <- read.table('./UCI HAR Dataset/train/y_train.txt')
+y.test <- read.table('./UCI HAR Dataset/test/y_test.txt')
+y <- rbind(y.train, y.test)
 
-dtTrainingMeasures <- data.table(read.table(file.path(projectDataPath, "train", "X_train.txt")))
-dtTestMeasures  <- data.table(read.table(file.path(projectDataPath, "test" , "X_test.txt")))
+# Extracts only the measurements on the mean and standard deviation for each measurement. 
+features <- read.table('./UCI HAR Dataset/features.txt')
+mean.sd <- grep("-mean\\(\\)|-std\\(\\)", features[, 2])
+x.mean.sd <- x[, mean.sd]
 
+# Uses descriptive activity names to name the activities in the data set
+names(x.mean.sd) <- features[mean.sd, 2]
+names(x.mean.sd) <- tolower(names(x.mean.sd)) 
+names(x.mean.sd) <- gsub("\\(|\\)", "", names(x.mean.sd))
 
-dtSubjects <- rbind(dtTrainingSubjects, dtTestSubjects)
-setnames(dtSubjects, "V1", "subject")
+activities <- read.table('./UCI HAR Dataset/activity_labels.txt')
+activities[, 2] <- tolower(as.character(activities[, 2]))
+activities[, 2] <- gsub("_", "", activities[, 2])
 
-dtActivities <- rbind(dtTrainingActivity, dtTestActivity)
-setnames(dtActivities, "V1", "activityNumber")
+y[, 1] = activities[y[, 1], 2]
+colnames(y) <- 'activity'
+colnames(subj) <- 'subject'
 
-dtMeasures <- rbind(dtTrainingMeasures, dtTestMeasures)
+# Appropriately labels the data set with descriptive activity names.
+data <- cbind(subj, x.mean.sd, y)
+str(data)
+write.table(data, './Project/merged.txt', row.names = F)
 
-dtSubjectActivities <- cbind(dtSubjects, dtActivities)
-dtSubjectAtvitiesWithMeasures <- cbind(dtSubjectActivities, dtMeasures)
-
-setkey(dtSubjectAtvitiesWithMeasures, subject, activityNumber)
-
-
-dtAllFeatures <- fread(file.path(projectDataPath, "features.txt"))
-setnames(dtAllFeatures, c("V1", "V2"), c("measureNumber", "measureName"))
-
-dtMeanStdMeasures <- dtAllFeatures[grepl("(mean|std)\\(\\)", measureName)]
-
-dtMeanStdMeasures$measureCode <- dtMeanStdMeasures[, paste0("V", measureNumber)]
-
-
-columnsToSelect <- c(key(dtSubjectAtvitiesWithMeasures), dtMeanStdMeasures$measureCode)
-
-dtSubjectActivitesWithMeasuresMeanStd <- subset(dtSubjectAtvitiesWithMeasures, 
-                                                select = columnsToSelect)
-
-dtActivityNames <- fread(file.path(projectDataPath, "activity_labels.txt"))
-setnames(dtActivityNames, c("V1", "V2"), c("activityNumber", "activityName"))
-
-
-dtSubjectActivitesWithMeasuresMeanStd <- merge(dtSubjectActivitesWithMeasuresMeanStd, 
-                                               dtActivityNames, by = "activityNumber", 
-                                               all.x = TRUE)
-
-setkey(dtSubjectActivitesWithMeasuresMeanStd, subject, activityNumber, activityName)
-
-dtSubjectActivitesWithMeasuresMeanStd <- data.table(melt(dtSubjectActivitesWithMeasuresMeanStd, 
-                                                         id=c("subject", "activityName"), 
-                                                         measure.vars = c(3:68), 
-                                                         variable.name = "measureCode", 
-                                                         value.name="measureValue"))
-
-dtSubjectActivitesWithMeasuresMeanStd <- merge(dtSubjectActivitesWithMeasuresMeanStd, 
-                                               dtMeanStdMeasures[, list(measureNumber, measureCode, measureName)], 
-                                               by="measureCode", all.x=TRUE)
-
-dtSubjectActivitesWithMeasuresMeanStd$activityName <- 
-  factor(dtSubjectActivitesWithMeasuresMeanStd$activityName)
-dtSubjectActivitesWithMeasuresMeanStd$measureName <- 
-  factor(dtSubjectActivitesWithMeasuresMeanStd$measureName)
-
-measureAvgerages <- dcast(dtSubjectActivitesWithMeasuresMeanStd, 
-                          subject + activityName ~ measureName, 
-                          mean, 
-                          value.var="measureValue")
-
-write.table(measureAvgerages, file="tidyData.txt", row.name=FALSE, sep = "\t")
+# Creates a second, independent tidy data set with the average of each variable for each activity and each subject. 
+average.df <- aggregate(x=data, by=list(activities=data$activity, subj=data$subject), FUN=mean)
+average.df <- average.df[, !(colnames(average.df) %in% c("subj", "activity"))]
+str(average.df)
+write.table(average.df, './Project/average.txt', row.names = F)
